@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>VPN Manager</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #0f172a; color: #e2e8f0; font-family: sans-serif; -webkit-tap-highlight-color: transparent; }
+        .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); }
+        .input-dark { background: #1e293b; border: 1px solid #334155; color: white; padding: 10px; border-radius: 8px; width: 100%; font-size: 16px; outline: none; }
+        .input-dark:focus { border-color: #10b981; }
+        .btn-primary { background: #059669; color: white; padding: 10px; border-radius: 8px; font-weight: 600; width: 100%; display: flex; justify-content: center; }
+        .btn-icon { padding: 8px; border-radius: 8px; background: rgba(255,255,255,0.05); display: flex; justify-content: center; cursor: pointer; }
+        .btn-icon:hover { background: rgba(255,255,255,0.15); }
+        .btn-action { font-size: 12px; font-weight: bold; padding: 4px 8px; border-radius: 6px; background: rgba(16, 185, 129, 0.2); color: #34d399; transition: 0.2s; }
+        .btn-action:hover { background: rgba(16, 185, 129, 0.3); }
+        ::-webkit-calendar-picker-indicator { filter: invert(1); opacity: 0.6; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+        const DB_API = 'api.php';
+
+        // --- ICONS ---
+        const Icon = ({ p }) => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{p}</svg>;
+        const Icons = {
+            Key: <Icon p={<><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></>} />,
+            Activity: <Icon p={<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>} />,
+            Server: <Icon p={<><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></>} />,
+            Copy: <Icon p={<><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></>} />,
+            Trash: <Icon p={<><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></>} />,
+            Edit: <Icon p={<path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>} />,
+            Check: <Icon p={<polyline points="20 6 9 17 4 12"/>} />,
+            User: <Icon p={<><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" x2="20" y1="8" y2="14"/><line x1="23" x2="17" y1="11" y2="11"/></>} />,
+            Alert: <Icon p={<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>} />,
+            Pie: <Icon p={<path d="M21.21 15.89A10 10 0 1 1 8 2.83M22 12A10 10 0 0 0 12 2v10z"/>} />
+        };
+
+        // --- UTILS ---
+        const formatBytes = (b) => {
+            if (!b) return '0 B';
+            const i = Math.floor(Math.log(b) / Math.log(1024));
+            return parseFloat((b / Math.pow(1024, i)).toFixed(2)) + ' ' + ['B', 'KB', 'MB', 'GB', 'TB'][i];
+        };
+
+        const getExpiryStatus = (d, days=7) => {
+            if(!d) return { isDanger: false };
+            const diff = Math.ceil((new Date(d) - new Date()) / 86400000);
+            if (diff < 0) return { label: 'EXPIRED', isDanger: true };
+            if (diff <= days) return { label: 'EXPIRING', isDanger: true };
+            return { isDanger: false };
+        };
+
+        const addOneMonth = (dateStr) => {
+            const d = dateStr ? new Date(dateStr) : new Date();
+            d.setMonth(d.getMonth() + 1);
+            return d.toISOString().split('T')[0];
+        };
+
+        const copyToClipboard = (text) => {
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text);
+            } else {
+                const textArea = document.createElement("textarea");
+                textArea.value = text;
+                textArea.style.position = "fixed";
+                textArea.style.left = "-9999px";
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+                try { document.execCommand('copy'); } catch (err) { console.error('Copy failed', err); }
+                document.body.removeChild(textArea);
+            }
+        };
+
+        const EXP_REGEX = / ?\[EXP:(\d{4}-\d{2}-\d{2})\]/;
+
+        const parseKey = (key, assignments) => {
+            const safeAssigns = Array.isArray(assignments) ? assignments : [];
+            const assign = safeAssigns.find(a => a.key_id == key.id);
+            const expiryDate = assign ? assign.expires_at : null;
+            const cleanName = key.name.replace(EXP_REGEX, '').trim();
+            
+            let status = { label: 'Active', color: 'text-white', badge: null };
+            if (expiryDate) {
+                const s = getExpiryStatus(expiryDate, 3);
+                if (s.label === 'EXPIRED') status = { label: 'Expired', color: 'text-red-500', badge: 'bg-red-500/20 text-red-400' };
+                else if (s.label === 'EXPIRING') status = { label: 'Expiring', color: 'text-amber-400', badge: 'bg-amber-500/20 text-amber-400' };
+            }
+            return { ...key, displayName: cleanName, expiryDate, status, dbAssign: assign };
+        };
+
+        // --- COMPONENTS ---
+        const Toast = ({ msg }) => (
+            <div className="fixed bottom-6 right-6 bg-emerald-600 text-white px-6 py-3 rounded-lg shadow-lg z-50 flex items-center gap-3">
+                {Icons.Check} <span className="font-medium">{msg}</span>
+            </div>
+        );
+
+        const Modal = ({ isOpen, title, children, onConfirm, onCancel, isDanger }) => {
+            if (!isOpen) return null;
+            return (
+                <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+                    <div className="glass bg-slate-900 w-full max-w-sm rounded-2xl p-6 border border-slate-700">
+                        <h3 className={`text-xl font-bold mb-4 flex items-center gap-2 ${isDanger?'text-red-500':'text-white'}`}>
+                            {isDanger && <span className="text-red-500">{Icons.Alert}</span>} {title}
+                        </h3>
+                        <div className="mb-6 text-slate-300 text-sm">{children}</div>
+                        <div className="flex justify-end gap-3">
+                            <button onClick={onCancel} className="px-4 py-2 rounded-lg text-slate-400 hover:text-white transition">Cancel</button>
+                            <button onClick={onConfirm} className={`px-4 py-2 rounded-lg text-white font-medium shadow-lg ${isDanger?'bg-red-600 hover:bg-red-700':'bg-emerald-600 hover:bg-emerald-700'}`}>Confirm</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const Login = ({ onLogin }) => {
+            const [u, setU] = useState('');
+            const [p, setP] = useState('');
+            const [err, setErr] = useState(null);
+            const [load, setLoad] = useState(false);
+
+            const sub = async (e) => {
+                e.preventDefault();
+                setLoad(true);
+                try {
+                    const res = await fetch(`${DB_API}?action=login`, { method: 'POST', body: JSON.stringify({username:u, password:p}) });
+                    const d = await res.json();
+                    if (d.error) setErr(d.error);
+                    else if (d.success) onLogin(d.user);
+                    else setErr("Unexpected Server Response");
+                } catch(e) { setErr("Login Failed. Check api.php"); }
+                setLoad(false);
+            };
+
+            return (
+                <div className="min-h-screen flex items-center justify-center p-4 bg-slate-950">
+                    <div className="glass p-8 rounded-2xl w-full max-w-md border border-slate-800">
+                        <div className="text-center mb-8">
+                            <div className="text-emerald-400 mx-auto mb-2 flex justify-center">{Icons.Server}</div>
+                            <h2 className="text-2xl font-bold text-white">VPN Manager</h2>
+                        </div>
+                        {err && <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-lg mb-4 text-sm text-center">{err}</div>}
+                        <form onSubmit={sub} className="space-y-4">
+                            <input className="input-dark" placeholder="Username" onChange={e=>setU(e.target.value)} />
+                            <input className="input-dark" type="password" placeholder="Password" onChange={e=>setP(e.target.value)} />
+                            <button disabled={load} className="btn-primary">{load ? '...' : 'Sign In'}</button>
+                        </form>
+                    </div>
+                </div>
+            );
+        };
+
+        const Dashboard = ({ user, onLogout }) => {
+            const [keys, setKeys] = useState([]);
+            const [metrics, setMetrics] = useState({});
+            const [serverInfo, setServerInfo] = useState({});
+            const [dbData, setDbData] = useState({ users: [], assignments: [] });
+            
+            const [toast, setToast] = useState(null);
+            const [error, setError] = useState(null);
+            const [tab, setTab] = useState('keys');
+            
+            const [confirmModal, setConfirmModal] = useState({ isOpen:false });
+            const [editModal, setEditModal] = useState({ isOpen:false, id:null, name:'', limit:'', date:'' });
+            
+            const [newKey, setNewKey] = useState({ name:'', limit:'', expires_at:'' });
+            const [newUser, setNewUser] = useState({ username:'', password:'', expires_at:'', data_limit:'' });
+            const [proc, setProc] = useState(false);
+
+            const outlineFetch = async (endpoint, method='GET', body=null) => {
+                const proxyUrl = `${DB_API}?action=proxy&endpoint=${encodeURIComponent(endpoint)}&method=${method}`;
+                const opts = { method: 'POST' };
+                if(body) opts.body = JSON.stringify(body);
+
+                const res = await fetch(proxyUrl, opts);
+                if (res.status === 204) return {};
+                if (res.status === 401) { onLogout(); return; }
+                if (!res.ok) throw new Error("Proxy/Outline Error");
+                return res.json();
+            };
+
+            const dbFetch = async (action, body=null) => {
+                const opts = body ? { method:'POST', body:JSON.stringify(body) } : {};
+                const res = await fetch(`${DB_API}?action=${action}`, opts);
+                return res.json();
+            };
+
+            const loadData = async () => {
+                try {
+                    setError(null);
+                    const [k, m, s, db] = await Promise.all([
+                        outlineFetch('/access-keys'),
+                        outlineFetch('/metrics/transfer'),
+                        outlineFetch('/server'),
+                        dbFetch('get_data')
+                    ]);
+                    
+                    setKeys(k.accessKeys || []);
+                    setMetrics(m.bytesTransferredByUserId || {});
+                    setServerInfo(s || {});
+                    setDbData({ users: db.users || [], assignments: db.assignments || [] });
+                    
+                    if(user.role === 'owner') checkCleanup(db.users || [], db.assignments || [], k.accessKeys || []);
+                } catch(e) { 
+                    console.error(e);
+                    setError("Connection Failed. Ensure Outline is running."); 
+                }
+            };
+
+            const checkCleanup = async (users, assigns, outlineKeys) => {
+                if (!Array.isArray(users) || !Array.isArray(assigns)) return;
+                const now = new Date();
+                const todayStr = now.toISOString().split('T')[0];
+                
+                for(const u of users) {
+                    if(u.role === 'admin' && u.expires_at && new Date(u.expires_at) < now) {
+                        const userKeys = assigns.filter(a => a.user_id == u.id);
+                        for(const uk of userKeys) await outlineFetch(`/access-keys/${uk.key_id}`, 'DELETE').catch(()=>{});
+                        await fetch(`${DB_API}?action=delete_user&id=${u.id}`);
+                    }
+                }
+                for (const a of assigns) {
+                    if (a.expires_at && a.expires_at < todayStr) {
+                        await outlineFetch(`/access-keys/${a.key_id}`, 'DELETE').catch(()=>{});
+                        await fetch(`${DB_API}?action=unassign_key&id=${a.key_id}`);
+                    }
+                }
+            };
+
+            useEffect(() => { loadData(); }, []);
+            const notify = (m) => { setToast(m); setTimeout(()=>setToast(null), 3000); };
+
+            // --- FAST CREATE KEY (OPTIMISTIC UPDATE) ---
+            const createKey = async () => {
+                if(!newKey.name) return;
+                setProc(true);
+                try {
+                    // 1. Create Key on Server
+                    const res = await outlineFetch('/access-keys', 'POST');
+                    
+                    // 2. Prepare Name & Limit
+                    let finalName = newKey.name;
+                    if(newKey.expires_at) finalName += ` [EXP:${newKey.expires_at}]`;
+                    
+                    // 3. Update Outline (Parallel)
+                    await outlineFetch(`/access-keys/${res.id}/name`, 'PUT', { name: finalName });
+                    
+                    let limitObj = undefined;
+                    if(newKey.limit) {
+                        const bytes = parseInt(newKey.limit) * 1024 * 1024 * 1024;
+                        limitObj = { bytes };
+                        await outlineFetch(`/access-keys/${res.id}/data-limit`, 'PUT', { limit: limitObj });
+                    }
+
+                    // 4. Save to DB
+                    await dbFetch('assign_key', { key_id: res.id, user_id: user.id, expires_at: newKey.expires_at });
+
+                    // 5. UPDATE UI INSTANTLY (No reload)
+                    const newKeyObj = { ...res, name: finalName, dataLimit: limitObj };
+                    const newAssignment = { key_id: res.id, user_id: user.id, expires_at: newKey.expires_at };
+
+                    setKeys(prev => [...prev, newKeyObj]);
+                    setDbData(prev => ({ ...prev, assignments: [...prev.assignments, newAssignment] }));
+
+                    setNewKey({name:'', limit:'', expires_at:''});
+                    notify("Key Created");
+                } catch(e) { 
+                    console.error(e); alert("Failed"); 
+                    loadData(); // Fallback reload
+                }
+                setProc(false);
+            };
+
+            const saveKeyEdit = async () => {
+                try {
+                    let name = editModal.name;
+                    if(editModal.date) name += ` [EXP:${editModal.date}]`;
+                    await outlineFetch(`/access-keys/${editModal.id}/name`, 'PUT', { name });
+                    
+                    if(editModal.limit) {
+                        const bytes = parseInt(editModal.limit) * 1024 * 1024 * 1024;
+                        await outlineFetch(`/access-keys/${editModal.id}/data-limit`, 'PUT', { limit: { bytes } });
+                    } else {
+                        await outlineFetch(`/access-keys/${editModal.id}/data-limit`, 'DELETE');
+                    }
+                    await dbFetch('update_key_expiry', { key_id: editModal.id, expires_at: editModal.date });
+                    setEditModal({...editModal, isOpen:false});
+                    loadData(); notify("Updated");
+                } catch(e) { console.error(e); alert("Failed"); }
+            };
+
+            const extendKey = async (k) => {
+                const newDate = addOneMonth(k.expiryDate);
+                try {
+                    await dbFetch('update_key_expiry', { key_id: k.id, expires_at: newDate });
+                    let name = k.displayName + ` [EXP:${newDate}]`;
+                    await outlineFetch(`/access-keys/${k.id}/name`, 'PUT', { name });
+                    loadData(); notify("Extended 1 Month");
+                } catch (e) { alert("Extend Failed"); }
+            };
+
+            const deleteKey = (id) => {
+                setConfirmModal({
+                    isOpen:true, 
+                    title:"Delete Key?", 
+                    isDanger:true, 
+                    children:"Cannot be undone.",
+                    onConfirm: async () => {
+                        await outlineFetch(`/access-keys/${id}`, 'DELETE').catch(e => console.warn("Key missing on server, removing from DB"));
+                        await fetch(`${DB_API}?action=unassign_key&id=${id}`);
+                        setConfirmModal({isOpen:false}); loadData(); notify("Deleted");
+                    },
+                    onCancel: () => setConfirmModal({isOpen:false})
+                });
+            };
+
+            const createAdmin = async () => {
+                if(!newUser.username) return;
+                setProc(true);
+                await dbFetch('add_user', newUser);
+                setNewUser({username:'', password:'', expires_at:'', data_limit:''});
+                setProc(false); loadData(); notify("Admin Added");
+            };
+
+            const deleteAdmin = (id) => {
+                setConfirmModal({
+                    isOpen:true,
+                    title:"Delete Admin?", 
+                    isDanger:true, 
+                    children:"Deletes admin AND all their keys.",
+                    onConfirm: async () => {
+                        const adminKeys = dbData.assignments.filter(a => a.user_id == id);
+                        for(const ak of adminKeys) await outlineFetch(`/access-keys/${ak.key_id}`, 'DELETE').catch(()=>{});
+                        await fetch(`${DB_API}?action=delete_user&id=${id}`);
+                        setConfirmModal({isOpen:false}); loadData(); notify("Admin Deleted");
+                    },
+                    onCancel: () => setConfirmModal({isOpen:false})
+                });
+            };
+
+            const extendAdmin = async (u) => {
+                const newDate = addOneMonth(u.expires_at);
+                await dbFetch('update_user', { id: u.id, expires_at: newDate });
+                loadData(); notify("Admin Extended 1M");
+            };
+
+            const assigns = dbData.assignments || [];
+            const myKeys = keys.filter(k => {
+                const a = assigns.find(x => x.key_id == k.id);
+                if(user.role === 'owner') return true;
+                return a && a.user_id == user.id;
+            }).map(k => parseKey(k, assigns)).reverse();
+
+            const myTraffic = myKeys.reduce((sum, k) => sum + (metrics[k.id] || 0), 0);
+            const freshUser = dbData.users.find(u => u.id === user.id) || user;
+            const accStatus = getExpiryStatus(freshUser.expires_at);
+
+            let quotaPercent = 0;
+            const limitBytes = (freshUser.data_limit || 0) * 1024 * 1024 * 1024;
+            if (limitBytes > 0) {
+                quotaPercent = (myTraffic / limitBytes) * 100;
+                if(quotaPercent > 100) quotaPercent = 100;
+            }
+
+            return (
+                <div className="min-h-screen p-4 md:p-8 max-w-5xl mx-auto pb-24">
+                    {toast && <Toast msg={toast} />}
+                    {error && <div className="bg-red-600 text-white p-4 rounded-lg mb-6 shadow-lg flex justify-between items-center">
+                        <span className="flex gap-2 items-center">{Icons.Alert} {error}</span>
+                    </div>}
+
+                    <Modal isOpen={editModal.isOpen} title="Edit Key" onCancel={()=>setEditModal({...editModal, isOpen:false})} onConfirm={saveKeyEdit}>
+                        <div className="space-y-3">
+                            <div><label className="text-xs text-slate-400 uppercase font-bold">Name</label>
+                            <input className="input-dark mt-1" value={editModal.name} onChange={e=>setEditModal({...editModal, name:e.target.value})} /></div>
+                            <div><label className="text-xs text-slate-400 uppercase font-bold">Limit (GB)</label>
+                            <input className="input-dark mt-1" type="number" placeholder="Limit GB" value={editModal.limit} onChange={e=>setEditModal({...editModal, limit:e.target.value})} /></div>
+                            <div><label className="text-xs text-slate-400 uppercase font-bold">Expiry Date</label>
+                            <input className="input-dark mt-1" type="date" value={editModal.date} onChange={e=>setEditModal({...editModal, date:e.target.value})} /></div>
+                        </div>
+                    </Modal>
+
+                    <Modal {...confirmModal} />
+
+                    <header className="flex justify-between items-center mb-8">
+                        <div>
+                            <h1 className="text-2xl font-bold text-white">VPN Manager</h1>
+                            <div className="text-sm text-slate-400 flex items-center gap-2 mt-1">
+                                <span className={`w-2 h-2 rounded-full ${accStatus.isDanger ? 'bg-red-500 animate-pulse' : 'bg-emerald-500'}`}></span>
+                                {user.username} ({user.role})
+                            </div>
+                        </div>
+                        <button onClick={onLogout} className="bg-slate-800 px-4 py-2 rounded-lg text-sm text-slate-300 hover:bg-slate-700">Logout</button>
+                    </header>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                        <div className="glass p-5 rounded-xl border-l-4 border-blue-500 relative overflow-hidden">
+                            <div className="absolute right-2 top-2 text-blue-500 opacity-20 scale-150">{Icons.Key}</div>
+                            <div className="text-xs text-slate-400 uppercase font-bold mb-1">Active Keys</div>
+                            <div className="text-3xl font-bold text-white">{myKeys.length}</div>
+                        </div>
+                        <div className="glass p-5 rounded-xl border-l-4 border-emerald-500 relative overflow-hidden">
+                            <div className="absolute right-2 top-2 text-emerald-500 opacity-20 scale-150">{Icons.Activity}</div>
+                            <div className="text-xs text-slate-400 uppercase font-bold mb-1">Total Traffic</div>
+                            <div className="text-3xl font-bold text-white">{formatBytes(myTraffic)}</div>
+                        </div>
+                        
+                        <div className={`glass p-5 rounded-xl border-l-4 relative overflow-hidden ${accStatus.isDanger && user.role !== 'owner' ? 'border-red-500 bg-red-500/10' : 'border-purple-500'}`}>
+                            <div className="absolute right-2 top-2 opacity-20 scale-150 text-white">{user.role==='owner'?Icons.Server:Icons.Pie}</div>
+                            {user.role === 'owner' ? (
+                                <><div className="text-xs text-slate-400 uppercase font-bold mb-1">Version</div><div className="text-3xl font-bold text-white">{serverInfo.version || '...'}</div></>
+                            ) : (
+                                <>
+                                    <div className="text-xs text-slate-400 uppercase font-bold mb-1">Admin Quota</div>
+                                    <div className="flex items-end gap-2">
+                                        <span className="text-2xl font-bold text-white">{freshUser.data_limit ? formatBytes(limitBytes) : 'Unlimited'}</span>
+                                    </div>
+                                    {freshUser.data_limit > 0 && (
+                                        <div className="w-full bg-slate-700 h-2 mt-2 rounded-full overflow-hidden">
+                                            <div className={`h-full ${quotaPercent>90?'bg-red-500':'bg-purple-500'}`} style={{width: `${quotaPercent}%`}}></div>
+                                        </div>
+                                    )}
+                                    <div className="text-[10px] text-slate-400 mt-1">
+                                        {freshUser.data_limit > 0 ? `${formatBytes(myTraffic)} Used` : 'No limits applied'}
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                    </div>
+
+                    {user.role === 'owner' && (
+                        <div className="flex gap-2 mb-6 bg-slate-900/50 p-1 rounded-lg w-fit border border-slate-800">
+                            <button onClick={()=>setTab('keys')} className={`px-4 py-2 rounded-md text-sm font-medium transition ${tab==='keys'?'bg-slate-700 text-white':'text-slate-400 hover:text-slate-200'}`}>Keys</button>
+                            <button onClick={()=>setTab('admins')} className={`px-4 py-2 rounded-md text-sm font-medium transition ${tab==='admins'?'bg-slate-700 text-white':'text-slate-400 hover:text-slate-200'}`}>Admins</button>
+                        </div>
+                    )}
+
+                    {tab === 'keys' && (
+                    <>
+                        <div className="glass p-6 rounded-xl mb-8 border border-slate-700/50 shadow-xl grid grid-cols-1 md:grid-cols-4 gap-4">
+                            <div className="md:col-span-2"><input className="input-dark" placeholder="Key Name" value={newKey.name} onChange={e=>setNewKey({...newKey, name:e.target.value})} /></div>
+                            <input className="input-dark" type="number" placeholder="Limit GB" value={newKey.limit} onChange={e=>setNewKey({...newKey, limit:e.target.value})} />
+                            <input className="input-dark" type="date" value={newKey.expires_at} onChange={e=>setNewKey({...newKey, expires_at:e.target.value})} />
+                            <button onClick={createKey} disabled={proc} className="btn-primary md:col-span-4">Create</button>
+                        </div>
+                        <div className="space-y-4">
+                            {myKeys.map(k => {
+                                const used = metrics[k.id] || 0;
+                                return (
+                                <div key={k.id} className="glass p-5 rounded-xl border border-slate-700/50 flex flex-col md:flex-row md:items-center gap-4 hover:border-slate-600 transition">
+                                    <div className="flex-1">
+                                        <div className="flex items-center gap-3 mb-1">
+                                            <h4 className={`font-bold text-lg ${k.status.color}`}>{k.displayName}</h4>
+                                            {k.status.badge && <span className={`text-[10px] px-2 py-0.5 rounded border border-white/10 uppercase font-bold tracking-wide ${k.status.badge}`}>{k.status.label}</span>}
+                                        </div>
+                                        <div className="flex flex-wrap gap-3 text-xs text-slate-400">
+                                            <span className="bg-slate-800/50 px-2 py-1 rounded border border-slate-700/50">ID: {k.id}</span>
+                                            <span className="bg-slate-800/50 px-2 py-1 rounded border border-slate-700/50 text-emerald-400">{formatBytes(used)} used</span>
+                                            <span className="bg-slate-800/50 px-2 py-1 rounded border border-slate-700/50">{k.dataLimit ? formatBytes(k.dataLimit.bytes) + ' Limit' : 'Unlimited'}</span>
+                                            <span className="bg-slate-800/50 px-2 py-1 rounded border border-slate-700/50 flex items-center gap-1">
+                                                {k.expiryDate || 'Never'}
+                                                <button onClick={()=>extendKey(k)} className="ml-1 btn-action" title="Extend 1 Month">+1M</button>
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-2 mt-2 md:mt-0 border-t md:border-t-0 border-slate-700/50 pt-3 md:pt-0">
+                                        <button onClick={()=>{copyToClipboard(k.accessUrl); notify("Copied")}} className="btn-icon text-slate-400 hover:text-white">{Icons.Copy}</button>
+                                        <button onClick={()=>{
+                                            const l = k.dataLimit ? (k.dataLimit.bytes / (1024*1024*1024)).toFixed(0) : '';
+                                            setEditModal({isOpen:true, id:k.id, name:k.displayName, limit:l, date:k.expiryDate||''});
+                                        }} className="btn-icon text-blue-400 hover:text-blue-300">{Icons.Edit}</button>
+                                        <button onClick={()=>deleteKey(k.id)} className="btn-icon text-red-400 hover:text-red-300">{Icons.Trash}</button>
+                                    </div>
+                                </div>
+                            )})}
+                            {myKeys.length===0 && <div className="text-center text-slate-500 py-10">No keys found.</div>}
+                        </div>
+                    </>
+                    )}
+
+                    {tab === 'admins' && user.role === 'owner' && (
+                    <>
+                        <div className="glass p-6 rounded-xl mb-8 border border-slate-700/50 shadow-xl grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
+                            <input className="input-dark" placeholder="Username" value={newUser.username} onChange={e=>setNewUser({...newUser, username:e.target.value})} />
+                            <input className="input-dark" type="password" placeholder="Password" value={newUser.password} onChange={e=>setNewUser({...newUser, password:e.target.value})} />
+                            <input className="input-dark" type="date" value={newUser.expires_at} onChange={e=>setNewUser({...newUser, expires_at:e.target.value})} />
+                            <input className="input-dark" type="number" placeholder="Limit (GB)" value={newUser.data_limit} onChange={e=>setNewUser({...newUser, data_limit:e.target.value})} />
+                            <button onClick={createAdmin} disabled={proc} className="btn-primary">Add Admin</button>
+                        </div>
+                        <div className="glass rounded-xl overflow-hidden border border-slate-700/50 shadow-xl">
+                            <table className="w-full text-left">
+                                <thead className="bg-slate-900/80 text-slate-400 text-xs uppercase"><tr><th className="p-4">User</th><th className="p-4">Limit</th><th className="p-4">Expires</th><th className="p-4 text-right">Action</th></tr></thead>
+                                <tbody className="divide-y divide-slate-700/50">
+                                    {dbData.users && dbData.users.filter(u=>u.role!=='owner').map(u => {
+                                        // --- NEW LOGIC FOR ADMIN USAGE ---
+                                        const adminKeys = dbData.assignments.filter(a => a.user_id == u.id);
+                                        const adminUsed = adminKeys.reduce((acc, k) => acc + (metrics[k.key_id] || 0), 0);
+                                        const limitBytes = (u.data_limit || 0) * 1024 * 1024 * 1024;
+                                        let usagePercent = 0;
+                                        if (limitBytes > 0) {
+                                            usagePercent = (adminUsed / limitBytes) * 100;
+                                            if (usagePercent > 100) usagePercent = 100;
+                                        }
+
+                                        return (
+                                        <tr key={u.id} className="hover:bg-slate-800/30 transition">
+                                            <td className="p-4 font-bold text-white">{u.username}</td>
+                                            <td className="p-4 text-sm text-slate-300">
+                                                <div>{u.data_limit ? u.data_limit + ' GB' : 'Unlimited'}</div>
+                                                {/* --- PROGRESS BAR --- */}
+                                                {u.data_limit > 0 && (
+                                                    <div className="w-full bg-slate-700 h-1.5 mt-2 rounded-full overflow-hidden">
+                                                        <div className={`h-full ${usagePercent > 90 ? 'bg-red-500' : 'bg-emerald-500'}`} style={{width: `${usagePercent}%`}}></div>
+                                                    </div>
+                                                )}
+                                                <div className="text-[10px] text-slate-500 mt-1">{formatBytes(adminUsed)} used</div>
+                                            </td>
+                                            <td className="p-4 text-sm text-slate-300">
+                                                <div className="flex items-center gap-2">
+                                                    {u.expires_at || 'Never'}
+                                                    <button onClick={()=>extendAdmin(u)} className="btn-action">+1M</button>
+                                                </div>
+                                            </td>
+                                            <td className="p-4 text-right">
+                                                <button onClick={()=>deleteAdmin(u.id)} className="btn-icon text-red-400 inline-flex">{Icons.Trash}</button>
+                                            </td>
+                                        </tr>
+                                    )})}
+                                </tbody>
+                            </table>
+                        </div>
+                    </>
+                    )}
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [u, setU] = useState(null);
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                fetch(`${DB_API}?action=check_session`)
+                    .then(r => r.json())
+                    .then(d => {
+                        if(d.logged_in) setU(d.user);
+                        setLoading(false);
+                    })
+                    .catch(() => setLoading(false));
+            }, []);
+
+            const handleLogout = async () => {
+                await fetch(`${DB_API}?action=logout`);
+                setU(null);
+            };
+
+            if(loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-white">Loading...</div>;
+
+            return u ? <Dashboard user={u} onLogout={handleLogout} /> : <Login onLogin={(user)=>setU(user)} />;
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
