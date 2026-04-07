@@ -15,7 +15,7 @@ NC='\033[0m' # No Color
 
 # --- GITHUB RAW BASE URL ---
 # UPDATE THIS to point to your own repo before pushing!
-REPO_RAW="https://raw.githubusercontent.com/YOUR_USER/YOUR_REPO/main"
+REPO_RAW="https://raw.githubusercontent.com/x-cinema-pro/autoinstaller/main"
 
 WEB_DIR="/var/www/html"
 
