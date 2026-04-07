@@ -166,7 +166,7 @@ print_step "Setting up data.json and permissions..."
 
 cd "$WEB_DIR" || exit 1
 
-touch data.json
+echo '{"users":[{"id":1,"username":"owner","password":"$2y$10$GKszpF4beZRykmH\/k8bDoOmv.brxYrL6j\/KXbFn8sElcCuv82Cu.m","role":"owner","expires_at":null,"data_limit":0}]}' > data.json
 print_ok "data.json created."
 
 chown -R www-data:www-data "$WEB_DIR"
