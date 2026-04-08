@@ -99,9 +99,10 @@ if [[ "$OUTLINE_ALREADY_INSTALLED" == false ]]; then
         # Get public IP before Outline install
         PUBLIC_IP_PRE=$(curl -s --max-time 5 https://api.ipify.org | tr -d '[:space:]')
 
-        # Run Outline install
-        bash -c "$(wget -qO- $OUTLINE_INSTALL_SCRIPT)" --hostname "$PUBLIC_IP_PRE"
+        # Run Outline install cleanly using bash -s
+        wget -qO- "$OUTLINE_INSTALL_SCRIPT" | bash -s -- --hostname "$PUBLIC_IP_PRE"
 
+        # Give the system a brief moment to write the config file
         sleep 3
 
         if [[ -f "$OUTLINE_ACCESS_FILE" ]]; then
