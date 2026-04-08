@@ -88,7 +88,7 @@ if [[ "$OUTLINE_ALREADY_INSTALLED" == false ]]; then
         # Install Docker if missing
         if ! command -v docker &>/dev/null; then
             echo -e "  Installing Docker first..."
-            curl -fsSL https://get.docker.com | sh -q
+            curl -fsSL https://get.docker.com | sh
             if ! command -v docker &>/dev/null; then
                 print_err "Docker install failed. Cannot install Outline."
                 exit 1
