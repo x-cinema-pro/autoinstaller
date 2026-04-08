@@ -17,6 +17,7 @@ REPO_RAW="https://raw.githubusercontent.com/x-cinema-pro/autoinstaller/main"
 WEB_DIR="/var/www/html"
 OUTLINE_ACCESS_FILE="/opt/outline/access.txt"
 OUTLINE_INSTALL_SCRIPT="https://raw.githubusercontent.com/Jigsaw-Code/outline-server/master/src/server_manager/install_scripts/install_server.sh"
+TEMP_LOG="/tmp/outline_install.log"
 
 print_banner() {
     echo ""
@@ -45,18 +46,12 @@ print_banner
 # ============================================================
 print_step "Checking for Outline Server..."
 
-parse_outline_url() {
-    if [[ -f "$OUTLINE_ACCESS_FILE" ]]; then
-        grep -oP '"apiUrl"\s*:\s*"\K[^"]+' "$OUTLINE_ACCESS_FILE" 2>/dev/null
-    fi
-}
-
 OUTLINE_ALREADY_INSTALLED=false
 OUTLINE_API_URL_INPUT=""
 
 # Check 1: access.txt exists and has apiUrl
 if [[ -f "$OUTLINE_ACCESS_FILE" ]]; then
-    DETECTED_URL=$(parse_outline_url)
+    DETECTED_URL=$(grep -oP '"apiUrl"\s*:\s*"\K[^"]+' "$OUTLINE_ACCESS_FILE" 2>/dev/null)
     if [[ -n "$DETECTED_URL" ]]; then
         OUTLINE_ALREADY_INSTALLED=true
         print_ok "Outline Server detected!"
@@ -69,64 +64,52 @@ fi
 if [[ "$OUTLINE_ALREADY_INSTALLED" == false ]]; then
     if command -v docker &>/dev/null && docker ps 2>/dev/null | grep -q "outline"; then
         OUTLINE_ALREADY_INSTALLED=true
-        echo -e "  ${YELLOW}⚠ Outline Docker container running but access.txt missing.${NC}"
-        echo -e "  ${YELLOW}  Will ask for URL manually.${NC}"
+        echo -e "  ${YELLOW}⚠ Outline Docker container running.${NC}"
     fi
 fi
 
-# If NOT installed → offer to install
+# If NOT installed → AUTO-INSTALL
 if [[ "$OUTLINE_ALREADY_INSTALLED" == false ]]; then
     echo -e "  ${YELLOW}Outline Server not found on this VPS.${NC}"
-    echo ""
-    echo -e "${BOLD}  Install Outline Server now? [Y/n]${NC}"
-    read -r -p "  > " INSTALL_OUTLINE_CHOICE
-    INSTALL_OUTLINE_CHOICE="${INSTALL_OUTLINE_CHOICE:-Y}"
+    print_step "Automatically installing Outline Server (this may take a few minutes)..."
 
-    if [[ "$INSTALL_OUTLINE_CHOICE" =~ ^[Yy]$ ]]; then
-        print_step "Installing Outline Server (this may take a few minutes)..."
-
-        # Install Docker if missing
+    # Install Docker if missing
+    if ! command -v docker &>/dev/null; then
+        echo -e "  Installing Docker first..."
+        curl -fsSL https://get.docker.com | sh
         if ! command -v docker &>/dev/null; then
-            echo -e "  Installing Docker first..."
-            curl -fsSL https://get.docker.com | sh
-            if ! command -v docker &>/dev/null; then
-                print_err "Docker install failed. Cannot install Outline."
-                exit 1
-            fi
-            print_ok "Docker installed."
+            print_err "Docker install failed. Cannot install Outline."
+            exit 1
         fi
-
-        # Get public IP before Outline install
-        PUBLIC_IP_PRE=$(curl -s --max-time 5 https://api.ipify.org | tr -d '[:space:]')
-
-        # Run Outline install cleanly using bash -s
-        wget -qO- "$OUTLINE_INSTALL_SCRIPT" | bash -s -- --hostname "$PUBLIC_IP_PRE"
-
-        # Give the system a brief moment to write the config file
-        sleep 3
-
-        if [[ -f "$OUTLINE_ACCESS_FILE" ]]; then
-            DETECTED_URL=$(parse_outline_url)
-            if [[ -n "$DETECTED_URL" ]]; then
-                print_ok "Outline Server installed successfully!"
-                echo -e "  API URL: ${CYAN}$DETECTED_URL${NC}"
-                OUTLINE_API_URL_INPUT="$DETECTED_URL"
-                OUTLINE_ALREADY_INSTALLED=true
-            else
-                print_err "Outline installed but could not read API URL from access.txt."
-            fi
-        else
-            print_err "Outline install finished but access.txt not found at $OUTLINE_ACCESS_FILE"
-        fi
-    else
-        echo -e "  ${YELLOW}Skipping Outline install.${NC}"
+        print_ok "Docker installed."
     fi
+
+    # Get public IP before Outline install
+    PUBLIC_IP_PRE=$(curl -s --max-time 5 https://api.ipify.org | tr -d '[:space:]')
+
+    # Run Outline install cleanly using bash -s, tee the output to screen AND to a log file
+    wget -qO- "$OUTLINE_INSTALL_SCRIPT" | bash -s -- --hostname "$PUBLIC_IP_PRE" | tee "$TEMP_LOG"
+
+    # Extract the URL directly from the terminal output log we just created
+    DETECTED_URL=$(grep -oP '"apiUrl"\s*:\s*"\K[^"]+' "$TEMP_LOG" | tail -n 1)
+
+    if [[ -n "$DETECTED_URL" ]]; then
+        print_ok "Outline Server installed successfully!"
+        echo -e "  API URL captured: ${CYAN}$DETECTED_URL${NC}"
+        OUTLINE_API_URL_INPUT="$DETECTED_URL"
+        OUTLINE_ALREADY_INSTALLED=true
+    else
+        print_err "Outline installed but could not capture API URL from terminal output."
+    fi
+    
+    # Cleanup temp log
+    rm -f "$TEMP_LOG"
 fi
 
-# Manual fallback if still no URL
+# Manual fallback if we still don't have a URL
 if [[ -z "$OUTLINE_API_URL_INPUT" ]]; then
     echo ""
-    echo -e "${BOLD}Enter your Outline Server API URL manually:${NC}"
+    echo -e "${BOLD}Please enter your Outline Server API URL manually:${NC}"
     echo -e "  (e.g. https://203.0.113.5:25336/AbCdEfGhIjKlMn)"
     read -r -p "  > " OUTLINE_API_URL_INPUT
 
