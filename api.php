@@ -11,7 +11,7 @@ session_start();
 // --- CONFIGURATION ---
 $DB_FILE = 'data.json';
 // OUTLINE SERVER LOCAL ADDRESS
-$OUTLINE_API_URL = "https://127.0.0.1:25336/4dHT4CobLHTcrSIyNIJqTw"; 
+$OUTLINE_API_URL = "https://127.0.0.1:58868/YDTex7EKiBiALhILr0L3Vw"; 
 
 // --- DATABASE ENGINE ---
 function getDB() {

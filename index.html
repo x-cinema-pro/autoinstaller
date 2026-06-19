@@ -4,10 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>VPN Manager</title>
-    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/js/react.js"></script>
+    <script src="/js/react-dom.js"></script>
+    <script src="/js/babel.min.js"></script>
+    <script src="/js/tailwind.js"></script>
     <style>
         body { background-color: #0f172a; color: #e2e8f0; font-family: sans-serif; -webkit-tap-highlight-color: transparent; }
         .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); }
@@ -24,7 +24,12 @@
 <body>
     <div id="root"></div>
 
-    <script type="text/babel">
+    <script>
+Babel.registerPreset("react-classic", {
+  presets: [[Babel.availablePresets["react"], { runtime: "classic" }]]
+});
+</script>
+    <script type="text/babel" data-presets="env,react-classic">
         const { useState, useEffect } = React;
         const DB_API = 'api.php';
 
@@ -220,18 +225,26 @@
                 if (!Array.isArray(users) || !Array.isArray(assigns)) return;
                 const now = new Date();
                 const todayStr = now.toISOString().split('T')[0];
-                
+
                 for(const u of users) {
                     if(u.role === 'admin' && u.expires_at && new Date(u.expires_at) < now) {
                         const userKeys = assigns.filter(a => a.user_id == u.id);
-                        for(const uk of userKeys) await outlineFetch(`/access-keys/${uk.key_id}`, 'DELETE').catch(()=>{});
-                        await fetch(`${DB_API}?action=delete_user&id=${u.id}`);
+                        let allDeleted = true;
+                        for(const uk of userKeys) {
+                            try { await outlineFetch(`/access-keys/${uk.key_id}`, 'DELETE'); }
+                            catch(e) { console.error('Failed to delete key ' + uk.key_id, e); allDeleted = false; }
+                        }
+                        if(allDeleted) await fetch(`${DB_API}?action=delete_user&id=${u.id}`);
                     }
                 }
                 for (const a of assigns) {
-                    if (a.expires_at && a.expires_at < todayStr) {
-                        await outlineFetch(`/access-keys/${a.key_id}`, 'DELETE').catch(()=>{});
-                        await fetch(`${DB_API}?action=unassign_key&id=${a.key_id}`);
+                    if (a.expires_at && a.expires_at <= todayStr) {
+                        try {
+                            await outlineFetch(`/access-keys/${a.key_id}`, 'DELETE');
+                            await fetch(`${DB_API}?action=unassign_key&id=${a.key_id}`);
+                        } catch(e) {
+                            console.error('Failed to delete expired key ' + a.key_id, e);
+                        }
                     }
                 }
             };
